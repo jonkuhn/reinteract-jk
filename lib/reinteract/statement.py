@@ -9,6 +9,8 @@
 import copy
 import traceback
 import sys
+import numpy
+import retable
 
 from custom_result import CustomResult
 from notebook import HelpResult
@@ -137,6 +139,9 @@ class Statement:
                 return
             elif isinstance(args[0], CustomResult) or isinstance(args[0], HelpResult):
                 self.results.append(args[0])
+            elif isinstance(args[0], numpy.ndarray):
+                self.results.append(retable.TableResult(args[0]))
+                self.result_scope['_'] = args[0]
             else:
                 self.results.append(repr(args[0]))
                 self.result_scope['_'] = args[0]
