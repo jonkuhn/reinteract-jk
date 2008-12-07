@@ -5,20 +5,35 @@ import numpy
 import gobject
 import reinteract.custom_result as custom_result
 
-class TableResult(custom_result.CustomResult):
-    def __init__(self, tableobj, dimensions=(500,200)):
+class NumpyNdArrayTableResult(custom_result.CustomResult):
+    def __init__(self, obj, dimensions=(500,200)):
         """
-        @type  tableobj: L{numpy.ndarray} or ...
-        @param tableobj: An object of a supported type to be turned into a table.
+        @type  obj: L{numpy.ndarray} or ...
+        @param obj: An object of a supported type to be turned into a table.
         @type  dimensions: L{tuple}
         @param dimensions: A tuple (width, height) of the size of the table
         """
-        self.tableobj = tableobj
+        self.obj = obj
         self.dimensions = dimensions
 
     def create_widget(self):
         widget = NumpyArrayWidget(self)
 
+        return widget
+
+class PyContainerTableResult(custom_result.CustomResult):
+    def __init__(self, obj, dimensions=(500,200)):
+        """
+        @type  obj: sequency or mapping
+        @param obj: An object of a supported type to be turned into a table.
+        @type  dimensions: L{tuple}
+        @param dimensions: A tuple (width, height) of the size of the table
+        """
+        self.obj = obj
+        self.dimensions = dimensions
+
+    def create_widget(self):
+        widget = PyContainerWidget(self)
         return widget
 
 class CellRendererNumericText(gtk.CellRendererText):
@@ -116,11 +131,11 @@ class NumpyArrayWidget(ScrolledTableWidget):
         self.__dataColNames = []
         self.__dataType = None
 
-        if isinstance(result.tableobj, numpy.ndarray):
+        if isinstance(result.obj, numpy.ndarray):
             self.__init_numpy_ndarray()
         else:
             raise ValueError(\
-                'NumpyArrayWidget result.tableobj is of an unsupported type')
+                'NumpyArrayWidget: result.obj is of an unsupported type')
 
         ScrolledTableWidget.__init__(\
             self,
@@ -154,7 +169,7 @@ class NumpyArrayWidget(ScrolledTableWidget):
     def __init_numpy_ndarray(self):
         result = self.__result
 
-        shape = result.tableobj.shape
+        shape = result.obj.shape
         if len(shape) == 1:
             higher_dim = tuple()
             if self.__oneDimAsRow:
@@ -176,7 +191,7 @@ class NumpyArrayWidget(ScrolledTableWidget):
 
         # we'll add some data now
         if len(shape) == 1 and self.__oneDimAsRow:
-            data = list(result.tableobj)
+            data = list(result.obj)
             if not hasattr(row, '__iter__'):
                 row = [data]
             row = ['[0]']
@@ -185,4 +200,47 @@ class NumpyArrayWidget(ScrolledTableWidget):
                 
             self.__treestore.append(None, row)
         else:
-            self.__add_numpy_ndarray(None, result.tableobj)
+            self.__add_numpy_ndarray(None, result.obj)
+
+class PyContainerWidget(ScrolledTableWidget):
+    def __init__(self, result):
+        self.__result = result
+
+        if hasattr(result.obj, '__getitem__'):
+            self.__init_pycol()
+        else:
+            raise ValueError(\
+                'NumpyArrayWidget: result.obj is of an unsupported type')
+
+        ScrolledTableWidget.__init__(\
+            self,
+            numCols    = 2,
+            colNames   = ['indices', 'value'],
+            colTypes   = [gobject.TYPE_STRING]*2,
+            treeStore  = self.__treestore,
+            dimensions = self.__result.dimensions)
+
+
+    def __add_pycol(self, parent, pycol, preidx=''):
+        if hasattr(pycol, '__getitem__') and hasattr(pycol, '__len__'):
+            if hasattr(pycol, 'keys'):
+                for key in pycol.keys():
+                    child = pycol[key]
+                    idxstr = preidx+'[%s]'%repr(key)
+                    row = [idxstr, repr(child)]
+                    thisrow = self.__treestore.append(parent, row)
+                    self.__add_pycol(thisrow, child, idxstr)
+            elif len(pycol) > 1:
+                for i in xrange(len(pycol)):
+                    child = pycol[i]
+                    idxstr = preidx+'[%s]'%repr(i)
+                    row = [idxstr, repr(child)]
+                    thisrow = self.__treestore.append(parent, row)
+                    self.__add_pycol(thisrow, child, idxstr)
+
+    def __init_pycol(self):
+        result = self.__result
+
+        args = (gobject.TYPE_STRING,) * 2 
+        self.__treestore = gtk.TreeStore(*args)
+        self.__add_pycol(None, result.obj)

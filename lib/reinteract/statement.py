@@ -140,7 +140,12 @@ class Statement:
             elif isinstance(args[0], CustomResult) or isinstance(args[0], HelpResult):
                 self.results.append(args[0])
             elif isinstance(args[0], numpy.ndarray):
-                self.results.append(retable.TableResult(args[0]))
+                self.results.append(retable.NumpyNdArrayTableResult(args[0]))
+                self.result_scope['_'] = args[0]
+            elif isinstance(args[0], list)\
+              or isinstance(args[0], dict)\
+              or isinstance(args[0], tuple):
+                self.results.append(retable.PyContainerTableResult(args[0]))
                 self.result_scope['_'] = args[0]
             else:
                 self.results.append(repr(args[0]))
