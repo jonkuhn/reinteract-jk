@@ -17,7 +17,7 @@ class TableResult(custom_result.CustomResult):
         self.dimensions = dimensions
 
     def create_widget(self):
-        widget = ScrolledTableWidget(self)
+        widget = NumpyArrayWidget(self)
 
         return widget
 
@@ -46,115 +46,57 @@ class CellRendererNumericText(gtk.CellRendererText):
 gobject.type_register(CellRendererNumericText)
 
 class ScrolledTableWidget(gtk.ScrolledWindow):
-    def __init__(self, result):
-        self.tbl = TableWidget(result)
-
-        # create a new scrolled window.
-        gtk.ScrolledWindow.__init__(self)
-
-        self.set_border_width(10)
-        self.set_shadow_type(gtk.SHADOW_ETCHED_IN)
-
-        self.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_ALWAYS)
-
-        self.add(self.tbl)
-        self.set_size_request(result.dimensions[0], result.dimensions[1])
-        self.tbl.show()
-
-class TableWidget(gtk.TreeView):
     __gsignals__ =\
     {
         'button-press-event':'override'
     }
-    def __init__(self, result):
-        self.__result = result
-
-        if isinstance(result.tableobj, numpy.ndarray):
-            self.__init_numpy_ndarray()
-        else:
-            raise ValueError('Unsupported type for tableobj')
-
-    def __init_numpy_ndarray(self):
-        result = self.__result
-        # create a TreeStore to use as the model
-        shape = result.tableobj.shape
-        num_rows = result.tableobj.shape[0]
-        if len(shape) == 1:
-            num_cols = 1
-        elif len(shape) == 2:
-            num_cols = result.tableobj.shape[1]
-        else:
-            raise ValueError('Unsupported array dimensions')
-        
-        # TODO: Check this on 32-bit installs
-        if result.tableobj.dtype == numpy.dtype('int32'):
-            data_type = gobject.TYPE_INT
-        elif result.tableobj.dtype == numpy.dtype('int64'):
-            data_type = gobject.TYPE_INT64
-        elif result.tableobj.dtype == numpy.dtype('float64'):
-            data_type = gobject.TYPE_DOUBLE
-        elif result.tableobj.dtype == numpy.dtype('float32'):
-            data_type = gobject.TYPE_DOUBLE
-        # Maybe there is a nicer way to detect string types
-        elif result.tableobj.dtype.name.startswith('|S'):
-            data_type = gobject.TYPE_STRING
-
-        args = (gobject.TYPE_STRING,) + (data_type,) * num_cols
-        self.__liststore = gtk.ListStore(*args)
-
-        # we'll add some data now
-        for r in range(0, num_rows):
-            row = result.tableobj[r]
-            if not hasattr(row, '__iter__'):
-                row = [row]
-            row = ['[%d]'%r] + list(row)
-            self.__liststore.append(row)
-
+    def __init__(self, numCols, colNames, colTypes, treeStore, dimensions):
         # create the TreeView using treestore
-        gtk.TreeView.__init__(self, self.__liststore)
+        self.__treeview = gtk.TreeView(treeStore)
 
-        # create the TreeViewColumn to display the data
-        self.tvCols = []
-        self.cellRenderers = []
-        for col in range(0, num_cols+1):
+        # create the TreeViewColumns to display data
+        self.__tvCols = []
+        self.__cellRenderers = []
+        for col in range(numCols):
             if col == 0:
-                tvcol = gtk.TreeViewColumn('row')
-                self.tvCols.append(tvcol)
-                self.append_column(tvcol)
+                tvcol = gtk.TreeViewColumn(colNames[col])
+                self.__tvCols.append(tvcol)
+                self.__treeview.append_column(tvcol)
                 cellRenderer = gtk.CellRendererText()
                 tvcol.pack_start(cellRenderer, True)
                 tvcol.add_attribute(cellRenderer, 'text', col)
-                tvcol.set_sort_column_id(col)
                 tvcol.set_resizable(True)
-                self.cellRenderers.append(cellRenderer)
+                self.__cellRenderers.append(cellRenderer)
             else:
-                tvcol = gtk.TreeViewColumn('[%d]' % (col-1))
-                self.tvCols.append(tvcol)
-                self.append_column(tvcol)
-                if data_type == gobject.TYPE_INT64:
+                tvcol = gtk.TreeViewColumn(colNames[col])
+                self.__tvCols.append(tvcol)
+                self.__treeview.append_column(tvcol)
+                if colTypes[col] == gobject.TYPE_INT64:
                     cellRenderer = CellRendererNumericText('%d')
                     tvcol.pack_start(cellRenderer, True)
                     tvcol.add_attribute(cellRenderer, 'value', col)
-                elif data_type == gobject.TYPE_DOUBLE:
+                elif colTypes[col] == gobject.TYPE_DOUBLE:
                     cellRenderer = CellRendererNumericText('%f')
                     tvcol.pack_start(cellRenderer, True)
                     tvcol.add_attribute(cellRenderer, 'value', col)
-                elif data_type == gobject.TYPE_STRING:
+                elif colTypes[col] == gobject.TYPE_STRING:
                     cellRenderer = gtk.CellRendererText()
                     tvcol.pack_start(cellRenderer, True)
                     tvcol.add_attribute(cellRenderer, 'text', col)
-                tvcol.set_sort_column_id(col)
+                #tvcol.set_sort_column_id(col)
                 tvcol.set_resizable(True)
-                self.cellRenderers.append(cellRenderer)
-
-        # make it searchable
-        #self.set_search_column(0)
-
-        # Allow drag and drop reordering of rows
-        # self.set_reorderable(True)
+                self.__cellRenderers.append(cellRenderer)
 
         # Show grid lines
-        self.set_grid_lines(gtk.TREE_VIEW_GRID_LINES_BOTH)
+        self.__treeview.set_grid_lines(gtk.TREE_VIEW_GRID_LINES_BOTH)
+
+        gtk.ScrolledWindow.__init__(self)
+        self.set_border_width(10)
+        self.set_shadow_type(gtk.SHADOW_ETCHED_IN)
+        self.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_ALWAYS)
+        self.add(self.__treeview)
+        self.set_size_request(dimensions[0], dimensions[1])
+        self.__treeview.show()
 
     def do_button_press_event(self, event):
         if event.button == 3:
@@ -165,3 +107,82 @@ class TableWidget(gtk.TreeView):
 
     def save(self, filename):
         self.__result.dataset.saveFile(filename)
+
+class NumpyArrayWidget(ScrolledTableWidget):
+    def __init__(self, result):
+        self.__result = result
+        self.__oneDimAsRow = True
+        self.__numDataCols = 0
+        self.__dataColNames = []
+        self.__dataType = None
+
+        if isinstance(result.tableobj, numpy.ndarray):
+            self.__init_numpy_ndarray()
+        else:
+            raise ValueError(\
+                'NumpyArrayWidget result.tableobj is of an unsupported type')
+
+        ScrolledTableWidget.__init__(\
+            self,
+            numCols    = self.__numDataCols+1,
+            colNames   = ['indices']+self.__dataColNames,
+            colTypes   = [gobject.TYPE_STRING]*(self.__numDataCols+1),
+            treeStore  = self.__treestore,
+            dimensions = self.__result.dimensions)
+
+
+    def __add_numpy_ndarray(self, parent, arrNd, preidx=''):
+        if len(arrNd.shape) <= 2:
+            for i in xrange(len(arrNd)):
+                data = arrNd[i]
+                if not hasattr(data, '__iter__'):
+                    data = [data]
+                idxstr = preidx+'[%d]'%i
+                row = [idxstr]
+                for value in data:
+                    row.append(str(value))
+                self.__treestore.append(parent, row)
+        else:
+            for i in xrange(len(arrNd)):
+                child = arrNd[i]
+                child_dim = len(arrNd[i].shape)
+                idxstr = preidx+'[%d]'%i
+                row = [idxstr] + ['-'*child_dim]*self.__numDataCols
+                thisrow = self.__treestore.append(parent, row)
+                self.__add_numpy_ndarray(thisrow, child, idxstr)
+
+    def __init_numpy_ndarray(self):
+        result = self.__result
+
+        shape = result.tableobj.shape
+        if len(shape) == 1:
+            higher_dim = tuple()
+            if self.__oneDimAsRow:
+                self.__numDataCols = shape[0]
+            else:
+                self.__numDataCols = 1
+        else:
+            higher_dim = shape[0:-2]
+            self.__numDataCols = shape[-1]
+
+        for col in xrange(self.__numDataCols):
+            if len(shape) == 1 and not self.__oneDimAsRow:
+                self.__dataColNames.append('[%d]'%col)
+            else:
+                self.__dataColNames.append('[%d]'%col)
+        
+        args = (gobject.TYPE_STRING,) * (self.__numDataCols+1)
+        self.__treestore = gtk.TreeStore(*args)
+
+        # we'll add some data now
+        if len(shape) == 1 and self.__oneDimAsRow:
+            data = list(result.tableobj)
+            if not hasattr(row, '__iter__'):
+                row = [data]
+            row = ['[0]']
+            for value in data:
+                row.append(str(value))
+                
+            self.__treestore.append(None, row)
+        else:
+            self.__add_numpy_ndarray(None, result.tableobj)
